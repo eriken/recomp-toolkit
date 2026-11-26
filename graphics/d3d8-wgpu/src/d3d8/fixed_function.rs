@@ -861,6 +861,7 @@ pub fn transform_texcoord(uv: [f32; 2], m: &Mat4, flags: u32) -> [f32; 2] {
 /// the last component the count selects, so with COUNT3 the matrix output's
 /// third component (`q`) divides the first two; its fourth component is not
 /// used. (A COUNT4 projected stage would divide by `w`; that is not resolved.)
+/// Plain `D3DTTFF_COUNT2` takes the first two outputs without a divide.
 /// Applying the matrix to the interpolated position and dividing per pixel is
 /// equivalent to D3D's per-vertex transform plus perspective-correct
 /// interpolation of the projected coordinates.
@@ -868,9 +869,16 @@ pub fn transform_texcoord(uv: [f32; 2], m: &Mat4, flags: u32) -> [f32; 2] {
 /// The WGSL function must stay in sync; `camera_space_texcoord_matches_count3_projected`
 /// checks both the CPU result and the shader source.
 pub fn camera_space_texcoord(cam_pos: [f32; 4], m: &Mat4, flags: u32) -> [f32; 2] {
-    debug_assert_eq!(flags, 0x103, "only COUNT3 | PROJECTED is resolved");
+    debug_assert!(
+        flags == 0x103 || flags == 2,
+        "only COUNT2 and COUNT3 | PROJECTED are resolved"
+    );
     let out = m.transform(cam_pos);
-    [out[0] / out[2], out[1] / out[2]]
+    if flags & 0x100 != 0 {
+        [out[0] / out[2], out[1] / out[2]]
+    } else {
+        [out[0], out[1]]
+    }
 }
 
 /// Group 0 binding 2 uniform: the resolved D3D8 table/pixel fog state.
@@ -1352,9 +1360,13 @@ fn transform_texcoord(uv: vec2<f32>, m: mat4x4<f32>, flags: u32) -> vec2<f32> {
 // Applying the matrix after interpolation is equivalent to D3D's per-vertex
 // transform followed by perspective-correct interpolation, and dividing at the
 // pixel is the projective texture mapping the fixed-function rasterizer
-// performs. See the CPU `camera_space_texcoord` below.
-fn camera_space_texcoord(pos: vec4<f32>, m: mat4x4<f32>) -> vec2<f32> {
+// performs. Plain D3DTTFF_COUNT2 keeps the first two outputs undivided. See
+// the CPU `camera_space_texcoord` below.
+fn camera_space_texcoord(pos: vec4<f32>, m: mat4x4<f32>, flags: u32) -> vec2<f32> {
     let out = m * pos;
+    if ((flags & 0x100u) == 0u) {
+        return out.xy;
+    }
     return out.xy / out.z;
 }
 
@@ -1376,7 +1388,7 @@ fn eval_stage(
     }
     var uv = uv0;
     if (s.tex_coord_gen == 1u) {
-        uv = camera_space_texcoord(cam_pos, s.tex_transform);
+        uv = camera_space_texcoord(cam_pos, s.tex_transform, s.tex_transform_flags);
     } else {
         // An FVF that does not carry the selected set leaves the coordinate
         // uninitialized; WineD3D and DXVK both resolve that to (0, 0).
@@ -2100,7 +2112,13 @@ mod tests {
         // the shader takes the camera-space branch on the generation word.
         assert_eq!(TEXCOORD_GEN_CAMERASPACEPOSITION, 1);
         assert_eq!(TEXCOORD_GEN_PASSTHRU, 0);
-        assert!(TEXTURED_WGSL.contains("fn camera_space_texcoord(pos: vec4<f32>, m: mat4x4<f32>)"));
+        assert!(
+            TEXTURED_WGSL
+                .contains("fn camera_space_texcoord(pos: vec4<f32>, m: mat4x4<f32>, flags: u32)")
+        );
+        let plain = camera_space_texcoord(cam, &m, 2);
+        assert!((plain[0] - 0.435 * 2.0).abs() < 1e-6);
+        assert!((plain[1] - (0.85 * 4.0 + 0.25)).abs() < 1e-6);
         assert!(TEXTURED_WGSL.contains("if (s.tex_coord_gen == 1u)"));
         assert!(TEXTURED_WGSL.contains(
             "let r0 = eval_stage(stages.stages[0], diffuse, diffuse, in.uv0, in.uv1, in.cam_pos"

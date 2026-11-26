@@ -885,12 +885,15 @@ impl DeviceState {
         // The terrain overlay generates coordinates from the camera-space
         // position with D3DTTFF_COUNT3 | D3DTTFF_PROJECTED (0x103): the texture
         // matrix is applied to `(x, y, z, 1)` and the third output (`q`, the
-        // last component COUNT3 selects) divides the first two. Other counts and modes stay named refusals on each
+        // last component COUNT3 selects) divides the first two. Higher water
+        // detail uses plain D3DTTFF_COUNT2 on the same input: the first two
+        // outputs, undivided. Other counts and modes stay named refusals on each
         // generation path rather than being silently ignored.
         let tex_transform = match (tex_coord_gen, transform_flags) {
             (TEXCOORD_GEN_PASSTHRU, 0) => Mat4::IDENTITY,
             (TEXCOORD_GEN_PASSTHRU, 2) => texture_transforms[stage as usize],
             (TEXCOORD_GEN_CAMERASPACEPOSITION, 0x103) => texture_transforms[stage as usize],
+            (TEXCOORD_GEN_CAMERASPACEPOSITION, 2) => texture_transforms[stage as usize],
             (TEXCOORD_GEN_PASSTHRU, other) => {
                 return Err(fail(format!(
                     "D3DTSS_TEXTURETRANSFORMFLAGS = {other:#010x} is not DISABLE or D3DTTFF_COUNT2 for a vertex texture coordinate"
@@ -898,7 +901,7 @@ impl DeviceState {
             }
             (_, other) => {
                 return Err(fail(format!(
-                    "D3DTSS_TEXTURETRANSFORMFLAGS = {other:#010x} is not D3DTTFF_COUNT3 | D3DTTFF_PROJECTED for D3DTSS_TCI_CAMERASPACEPOSITION"
+                    "D3DTSS_TEXTURETRANSFORMFLAGS = {other:#010x} is not D3DTTFF_COUNT2 or D3DTTFF_COUNT3 | D3DTTFF_PROJECTED for D3DTSS_TCI_CAMERASPACEPOSITION"
                 )));
             }
         };
@@ -2326,6 +2329,10 @@ mod tests {
         state.set_texture_stage_state(0, 24, 0).unwrap();
         let err = state.resolve_texture_stage(0, true).unwrap_err();
         assert!(err.cause.contains("COUNT3"));
+        state.set_texture_stage_state(0, 24, 2).unwrap(); // TTFF COUNT2
+        let stage = state.resolve_texture_stage(0, true).unwrap();
+        assert_eq!(stage.tex_transform_flags, 2);
+        assert_eq!(stage.tex_transform, m);
     }
 
     #[test]
@@ -2341,8 +2348,8 @@ mod tests {
         assert!(resolve(0x30000, 0x103).contains("CAMERASPACEREFLECTIONVECTOR"));
         // A generated coordinate cannot also name a vertex set.
         assert!(resolve(0x20001, 0x103).contains("CAMERASPACEPOSITION"));
-        // COUNT2/PROJECTED, COUNT2, COUNT3 without projected and COUNT4 with
-        // projected are not the mode the game uses.
+        // COUNT2/PROJECTED, COUNT3 without projected and COUNT4 with
+        // projected are not modes the game uses.
         assert!(resolve(0x20000, 0x102).contains("COUNT3"));
         assert!(resolve(0x20000, 0x003).contains("COUNT3"));
         assert!(resolve(0x20000, 0x104).contains("COUNT3"));
