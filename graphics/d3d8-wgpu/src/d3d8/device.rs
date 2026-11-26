@@ -11,7 +11,7 @@ use super::{
         packed_indexed_list_into,
     },
     shader::{self, Declaration, Program},
-    state::{DeviceState, LightingUniform, LitInput, MAX_TEXTURE_STAGES},
+    state::{DeviceState, LIT_RECORD, LightingUniform, LitInput, MAX_TEXTURE_STAGES},
     stats, survey,
     texture_cache::{TextureCache, TextureKey},
 };
@@ -1863,7 +1863,7 @@ impl Device {
 
     pub fn begin_scene(&mut self) -> Result<(), RenderError> {
         if self.scene {
-            return Err(RenderError::new("BeginScene", "scene already open"));
+            return Err(RenderError::invalid("BeginScene", "scene already open"));
         }
         self.scene = true;
         Ok(())
@@ -1871,7 +1871,7 @@ impl Device {
 
     pub fn end_scene(&mut self) -> Result<(), RenderError> {
         if !self.scene {
-            return Err(RenderError::new("EndScene", "no open scene"));
+            return Err(RenderError::invalid("EndScene", "no open scene"));
         }
         self.scene = false;
         self.flush_draws();
@@ -1933,6 +1933,9 @@ impl Device {
         }
         self.draw_index += 1;
         self.frame_stats.draws += 1;
+        if self.skip_unsupported_declaration() {
+            return Ok(());
+        }
         if skipped_fvf(fvf) {
             return Ok(());
         }
@@ -1961,6 +1964,29 @@ impl Device {
                 return Err(error);
             }
         };
+        // A declaration-only shader that is a supported FVF plus trailing
+        // texture sets draws from each vertex's leading bytes only.
+        let truncated;
+        let truncated_view;
+        let vertices = match self.shaders.get(&self.vertex_shader) {
+            Some((Some(d), p)) if p.declaration_only => match d.truncated_stride() {
+                Some(keep) if u64::from(vertices.stride) >= d.layout.stride => {
+                    let keep = keep as usize;
+                    let src = vertices.stride as usize;
+                    let bytes = vertices.bytes();
+                    let n = bytes.len() / src;
+                    let mut out = Vec::with_capacity(n * keep);
+                    for v in 0..n {
+                        out.extend_from_slice(&bytes[v * src..v * src + keep]);
+                    }
+                    truncated = out;
+                    truncated_view = VertexBuffer::borrowed(&truncated, keep as u32)?;
+                    &truncated_view
+                }
+                _ => vertices,
+            },
+            _ => vertices,
+        };
         let bound_vs = self.shaders.get(&self.vertex_shader);
         let fvf = if let Some((Some(d), p)) = bound_vs {
             if p.declaration_only {
@@ -1974,7 +2000,15 @@ impl Device {
         let vs = bound_vs.filter(|(_, p)| !p.declaration_only);
         let ps = self.shaders.get(&self.pixel_shader).map(|s| &s.1);
         if let Some(ps) = ps {
-            ps.validate_draw()?;
+            // DIVERGENCE(original): a pixel shader the renderer can create but
+            // not draw (TEXM3X3VSPEC cube reflections) skips its draws.
+            if let Err(error) = ps.validate_draw() {
+                static SEEN: std::sync::Once = std::sync::Once::new();
+                SEEN.call_once(|| {
+                    eprintln!("d3d8: skipping draws with an undrawable pixel shader: {error}")
+                });
+                return Ok(());
+            }
         }
         let programmable = vs.is_some() || ps.is_some();
         if vs.is_some() {
@@ -2144,8 +2178,8 @@ impl Device {
         } else {
             self.cull_state()
         };
-        let lighting_uniform = if !self.cpu_lighting && vs.is_none() && matches!(fvf, 0x112 | 0x152)
-        {
+        let normal_fvf = matches!(fvf, 0x112 | 0x152 | 0x212);
+        let lighting_uniform = if !self.cpu_lighting && vs.is_none() && normal_fvf {
             if self.state.gpu_lighting_positions_supported(
                 vertices.bytes(),
                 start_vertex as usize,
@@ -2254,6 +2288,8 @@ impl Device {
             match fvf {
                 0x0152 => Some(LitInput::XYZ_NORMAL_DIFFUSE_TEX1),
                 0x0112 => Some(LitInput::XYZ_NORMAL_TEX1),
+                0x0212 => Some(LitInput::XYZ_NORMAL_TEX2),
+                _ if self.state.lighting_enabled() => LitInput::without_normal(fvf),
                 _ => None,
             }
         };
@@ -2799,6 +2835,9 @@ impl Device {
         if draw.primitive_count == 0 {
             return Ok(());
         }
+        if self.skip_unsupported_declaration() {
+            return Ok(());
+        }
         // Preserve expansion for strips/fans and diagnostic traces.
         // The switch also permits before/after profiling of the same scene.
         static EXPAND: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -2821,7 +2860,7 @@ impl Device {
             // Pack only referenced sources: GPU lighting consumes their raw
             // attributes, CPU fallback evaluates each source once. Sparse gaps
             // are never evaluated; queued snapshots own all required bytes.
-            if matches!(effective_fvf, 0x0152 | 0x0112) {
+            if matches!(effective_fvf, 0x0152 | 0x0112 | 0x0212) {
                 let mut packed = std::mem::take(&mut self.index_scratch);
                 let mut remapped = std::mem::take(&mut self.index_rebased);
                 let result = (|| {
@@ -3122,6 +3161,29 @@ impl Device {
     /// The key combines the named error with a compact dump of the draw state
     /// (topology, FVF/vertex-shader handle, stride, fog/lighting/blend and the
     /// first two texture stages).
+    /// True when the bound vertex shader is declaration-only and its layout
+    /// has no fixed-function mapping. Such draws are skipped; each distinct
+    /// layout is reported once.
+    fn skip_unsupported_declaration(&mut self) -> bool {
+        let Some((Some(decl), program)) = self.shaders.get(&self.vertex_shader) else {
+            return false;
+        };
+        if !program.declaration_only {
+            return false;
+        }
+        let Err(error) = decl.fixed_fvf() else {
+            return false;
+        };
+        static SEEN: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+        let text = error.to_string();
+        let mut seen = SEEN.lock().unwrap();
+        if !seen.contains(&text) {
+            eprintln!("d3d8: skipping draws with an unsupported declaration: {text}");
+            seen.push(text);
+        }
+        true
+    }
+
     pub fn note_draw_rejection(
         &self,
         error: &RenderError,
@@ -3620,7 +3682,7 @@ mod tests {
                     assert!(queued.indices.is_some());
                     assert_eq!(
                         queued.vertex_len,
-                        3 * if sparse { 36 } else { stride } as u64
+                        3 * if sparse { LIT_RECORD } else { stride as usize } as u64
                     );
                     assert_eq!(queued.count, 6);
                 }

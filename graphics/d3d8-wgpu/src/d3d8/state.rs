@@ -793,9 +793,13 @@ impl DeviceState {
                 )));
             }
             match value & d3dta::SELECTMASK {
-                d3dta::DIFFUSE | d3dta::CURRENT | d3dta::TEXTURE | d3dta::TFACTOR => Ok(value),
+                d3dta::DIFFUSE
+                | d3dta::CURRENT
+                | d3dta::TEXTURE
+                | d3dta::TFACTOR
+                | d3dta::SPECULAR => Ok(value),
                 other => Err(fail(format!(
-                    "{name} = {other:#x} is not DIFFUSE/CURRENT/TEXTURE/TFACTOR"
+                    "{name} = {other:#x} is not DIFFUSE/CURRENT/TEXTURE/TFACTOR/SPECULAR"
                 ))),
             }
         };
@@ -1289,11 +1293,19 @@ impl DeviceState {
     }
 
     /// Validate the state consumed by the supported guest vertex layout.
+    /// `D3DRS_LIGHTING`.
+    pub fn lighting_enabled(&self) -> bool {
+        self.states.lighting
+    }
+
     pub fn validate_draw(&self, fvf: u32) -> Result<(), RenderError> {
         let pre_transformed = matches!(fvf, 0x0044 | 0x0144 | 0x01C4 | 0x02C4);
-        // 0x112 (XYZ/NORMAL/TEX1) and 0x152 (XYZ/NORMAL/DIFFUSE/TEX1) both
-        // carry a normal, so they feed the implemented lighting stage.
-        self.validate_fixed_function(matches!(fvf, 0x0112 | 0x0152), pre_transformed)
+        // 0x112 (XYZ/NORMAL/TEX1), 0x152 (XYZ/NORMAL/DIFFUSE/TEX1) and 0x212
+        // carry a normal, so they feed the implemented lighting stage. With
+        // lighting on, the normal-less diffuse FVFs are lit with a zero normal.
+        let lit = matches!(fvf, 0x0112 | 0x0152 | 0x0212)
+            || (self.states.lighting && LitInput::without_normal(fvf).is_some());
+        self.validate_fixed_function(lit, pre_transformed)
     }
 
     fn validate_fixed_function(
@@ -2126,7 +2138,7 @@ mod tests {
         );
         assert!(
             resolve(|s| {
-                s.set_texture_stage_state(0, 2, d3dta::SPECULAR).unwrap();
+                s.set_texture_stage_state(0, 2, d3dta::TEMP).unwrap();
             })
             .contains("COLORARG1")
         );
@@ -2469,4 +2481,4 @@ mod tests {
 #[path = "lighting.rs"]
 mod lighting;
 pub(crate) use lighting::LightingUniform;
-pub use lighting::LitInput;
+pub use lighting::{LIT_RECORD, LitInput};
