@@ -2899,6 +2899,26 @@ void host_pump_timers(X86 *c) {
     host_pump_mm_timers(c);
 }
 
+// Windows runs multimedia timers on a thread of their own, so a guest that
+// never polls messages (a loader, a game loop on DirectInput) still hears from
+// them on time. An import return with no section held is the closest seam.
+void host_mm_timers_after_import(X86 *c) {
+    static bool firing = false;
+    if (timers().empty() || firing)
+        return;
+    const uint32_t now = host_millis();
+    bool due = false;
+    for (const auto &kv : timers())
+        due |= kv.second.alive && (int32_t)(now - kv.second.next_due) >= 0;
+    if (!due || !sched_holds_no_critsec() || sched_in_atomic())
+        return;
+    firing = true;
+    const X86 saved = *c;
+    host_pump_mm_timers(c);
+    *c = saved;
+    firing = false;
+}
+
 void host_pump_mm_timers(X86 *c) {
     if (timers().empty())
         return;
@@ -2912,9 +2932,14 @@ void host_pump_mm_timers(X86 *c) {
         if (it == timers().end())
             continue;
         MmTimer t = it->second;
-        if (t.periodic)
-            it->second.next_due = now + t.period;
-        else
+        if (t.periodic) {
+            // A periodic timer keeps its schedule, as Windows' does: a late
+            // firing does not push the next one back. Far behind, it resyncs.
+            uint32_t next = t.next_due + t.period;
+            if ((int32_t)(now - next) > (int32_t)(4 * t.period))
+                next = now + t.period;
+            it->second.next_due = next;
+        } else
             timers().erase(it);
         if (!t.callback)
             continue;

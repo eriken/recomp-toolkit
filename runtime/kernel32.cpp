@@ -218,7 +218,6 @@ uint32_t sched_wait_objects_ex(X86 *c, const uint32_t *handles, uint32_t count, 
 void sched_enter_critsec(uint32_t cs);
 bool sched_try_critsec(uint32_t cs);
 void sched_leave_critsec(uint32_t cs);
-bool sched_holds_no_critsec();
 void sched_wake_all();
 void sched_pulse_event(HObj *o);
 
@@ -2129,11 +2128,6 @@ void k_LeaveCriticalSection(X86 *c) {
     imports_call_leaves_surfaces();
     sched_leave_critsec(arg(c, 0));
     set_eax(c, 0);
-    // Windows runs multimedia timers on a thread of their own, so a guest busy
-    // loading still hears from them. A thread holding no section is where a
-    // callback can run without entering a lock it does not own.
-    if (sched_holds_no_critsec())
-        host_pump_mm_timers(c);
 }
 void k_DeleteCriticalSection(X86 *c) {
     set_eax(c, 0);
@@ -3619,8 +3613,12 @@ bool sched_try_critsec(uint32_t cs) {
     return got;
 }
 
-bool sched_holds_no_critsec() {
+bool holds_no_critsec() {
     return cur_thread()->critsecs_held == 0;
+}
+
+bool in_atomic_span() {
+    return t_atomic != 0;
 }
 
 void sched_leave_critsec(uint32_t cs) {
@@ -6248,3 +6246,11 @@ const ImportShim g_kernel32_shims[] = {
     {"KERNEL32.dll", "GetLocaleInfoW", 4, k_GetLocaleInfoW},
 };
 const size_t g_kernel32_shim_count = sizeof(g_kernel32_shims) / sizeof(g_kernel32_shims[0]);
+
+bool sched_holds_no_critsec() {
+    return holds_no_critsec();
+}
+
+bool sched_in_atomic() {
+    return in_atomic_span();
+}

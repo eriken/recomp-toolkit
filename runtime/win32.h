@@ -512,6 +512,7 @@ void host_set_idle_waiter(int (*fn)(double seconds));
 // window manager reacts to: it is when activation, focus and the first paint
 // happen. Not called for a window that was already visible.
 void host_set_window_shown_callback(void (*fn)(uint32_t hwnd));
+bool host_take_cursor_warp(int32_t *x, int32_t *y);
 bool host_window_visible(uint32_t hwnd);
 
 // ---------------------------------------------------------------------------
@@ -606,6 +607,11 @@ void host_midi_close(void);
 void host_pump_timers(X86 *c);
 // Only the due timeSetEvent timers, without the frame pumps.
 void host_pump_mm_timers(X86 *c);
+// Called as an import returns: fires due timeSetEvent timers when this thread
+// holds no critical section, leaving the guest's CPU state as it was.
+void host_mm_timers_after_import(X86 *c);
+bool sched_holds_no_critsec();
+bool sched_in_atomic();
 
 // ---------------------------------------------------------------------------
 // Registry: backed by build/recomp/registry.json (path overridable with

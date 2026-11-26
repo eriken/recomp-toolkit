@@ -1,4 +1,5 @@
 #include "imports.h"
+#include "win32.h"
 #include "loader.h"
 #include "pe.h"
 #include "game_config.h"
@@ -731,6 +732,7 @@ void imports_call_leaves_surfaces() {
     c->eip = ret_addr;
     if (tracing & kTraceVerbose)
         recomp_seh_validate_chain_body(c, "import leave", desc);
+    host_mm_timers_after_import(c);
     return true;
 }
 
@@ -768,6 +770,7 @@ bool imports_dispatch(X86 *c, uint32_t target) {
         g_return_observer(tramps()[idx].desc.c_str(), c->r[R_EAX], ret_addr);
     c->r[R_ESP] += pop;
     c->eip = ret_addr;
+    host_mm_timers_after_import(c);
     return true;
 #endif
 }
