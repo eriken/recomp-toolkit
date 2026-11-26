@@ -797,6 +797,13 @@ pub struct CompositionDraw {
     blend: u32,
     filter: u32,
 }
+/// The guest's display gamma ramp for composition: 768 entries (256 red, then
+/// green, then blue), or null for none.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn host_gpu_set_gamma_ramp(ramp: *const u16) {
+    let ramp = (!ramp.is_null()).then(|| unsafe { &*(ramp as *const [u16; 768]) });
+    crate::backend::native_present::set_gamma_ramp(ramp);
+}
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn host_gpu_compose_plan(
     g: *mut HostGpu,

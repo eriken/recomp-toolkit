@@ -18,6 +18,8 @@ typedef struct HostGpuCompositionDraw {
     double rect[4], uv[4];
     uint32_t blend, filter;
 } HostGpuCompositionDraw;
+/* 768 entries (256 red, green, blue), or null for none. */
+void host_gpu_set_gamma_ramp(const uint16_t *ramp);
 uint8_t host_gpu_compose_plan(HostGpu *, uint64_t command, uint64_t target, int32_t width,
                               int32_t height, const HostGpuCompositionDraw *, size_t count);
 HostGpu *host_gpu_create(void);

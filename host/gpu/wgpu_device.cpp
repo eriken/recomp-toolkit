@@ -338,3 +338,7 @@ const char *default_backend_name() {
     return "wgpu";
 }
 } // namespace gpu
+
+extern "C" void host_display_set_gamma(const uint16_t *ramp) {
+    host_gpu_set_gamma_ramp(ramp);
+}

@@ -16,7 +16,8 @@ use super::{
     texture_cache::{TextureCache, TextureKey},
 };
 use crate::backend::native_present::{
-    NativeConverter, NativeSlot, begin_slot, create_converter, retain_slot, submit_copy,
+    NativeConverter, NativeSlot, begin_slot, create_converter, gamma_active, retain_slot,
+    submit_copy,
 };
 use crate::{
     RenderError,
@@ -3032,7 +3033,7 @@ impl Device {
         let index = ring.next;
         let slot = std::sync::Arc::clone(&ring.slots[index]);
         self.wait_slot(&slot.busy)?;
-        if bpp == 16 && ring.converter.is_none() {
+        if (bpp == 16 || gamma_active()) && ring.converter.is_none() {
             ring.converter = Some(create_converter(&self.gpu.device)?);
         }
         if ring.initialized_source.as_ref() != Some(&b.texture) {
@@ -3070,17 +3071,18 @@ impl Device {
             ));
         }
         self.gpu.with_synchronized_queue(|queue| {
+            let needed = ring
+                .converter
+                .as_mut()
+                .is_some_and(|converter| converter.prepare(queue, bpp == 16));
+            let converter = ring.converter.as_ref().filter(|_| needed);
             submit_copy(
                 &self.gpu.device,
                 queue,
                 &b.texture,
                 &slot.texture,
                 std::sync::Arc::clone(&readiness),
-                if bpp == 16 {
-                    ring.converter.as_ref()
-                } else {
-                    None
-                },
+                converter,
             )
         })?;
         let lease = retain_slot(readiness, std::sync::Arc::clone(&self.gpu));

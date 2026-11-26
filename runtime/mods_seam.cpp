@@ -89,6 +89,7 @@ __attribute__((weak)) int32_t host_display_anchor(uint64_t, int8_t, int8_t, int)
 __attribute__((weak)) uint32_t host_display_elements(uint64_t *, uint32_t) {
     return 0;
 }
+__attribute__((weak)) void host_display_set_gamma(const uint16_t *) {}
 __attribute__((weak)) float host_display_aspect() {
     return 4.0f / 3.0f;
 }

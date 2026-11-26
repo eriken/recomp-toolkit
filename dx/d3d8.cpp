@@ -248,7 +248,8 @@ void write_caps(uint32_t addr) {
     // Caps2 (+0x0c). Windowed rendering is the normal host path; the arena owns
     // all resources so managed textures are manageable; every texture lock is
     // serviced from CPU storage, so dynamic textures are honest. Not advertised:
-    // D3DCAPS2_FULLSCREENGAMMA / CANCALIBRATEGAMMA (SetGammaRamp is a logged no-op) and
+    // D3DCAPS2_FULLSCREENGAMMA / CANCALIBRATEGAMMA (the host applies SetGammaRamp
+    // to the composed guest layers instead of the display) and
     // D3DCAPS2_NO2DDURING3DSCENE (inert: the host always composites 2D).
     wr32(addr + 0x0c,
          D3DCAPS2_CANRENDERWINDOWED | D3DCAPS2_CANMANAGERESOURCE | D3DCAPS2_DYNAMICTEXTURES);
@@ -979,11 +980,25 @@ void Dev_CreateCubeTexture(X86 *c) {
 void Dev_GetAvailableTextureMem(X86 *c) {
     com_ret(c, D8_AVAILABLE_TEXTURE_MEM);
 }
-// DIVERGENCE(original): accept gamma updates without changing host output.
-// SetGammaRamp returns void; com_ret only supplies the bridge's return ABI.
+// The last SetGammaRamp as 8-bit tables, for frames presented from CPU pixels;
+// the GPU handoff applies the same ramp on the way to the host.
+static uint8_t g_gamma_lut[3][256];
+static bool g_gamma_on = false;
+// SetGammaRamp(Flags, const D3DGAMMARAMP *) returns void; com_ret only
+// supplies the bridge's return ABI.
 void Dev_SetGammaRamp(X86 *c) {
-    log_once("d3d8.device.SetGammaRamp",
-             "d3d8: SetGammaRamp ignored; gamma correction is not implemented");
+    const uint32_t ramp = arg(c, 2);
+    if (ramp && gm_valid(ramp, 768 * 2)) {
+        uint16_t values[768];
+        bool identity = true;
+        for (uint32_t i = 0; i < 768; ++i) {
+            values[i] = rd16(ramp + i * 2);
+            g_gamma_lut[i / 256][i % 256] = uint8_t((values[i] + 128) / 257);
+            identity = identity && g_gamma_lut[i / 256][i % 256] == i % 256;
+        }
+        g_gamma_on = !identity;
+        host_display_set_gamma(values);
+    }
     com_ret(c, 0);
 }
 void Dev_GetDirect3D(X86 *c) {
@@ -1363,6 +1378,10 @@ void Dev_Present(X86 *c) {
             com_ret(c, bridge_result(c, status));
             return;
         }
+        if (g_gamma_on)
+            for (size_t i = 0; i + 3 < rgba.size(); i += 4)
+                for (int channel = 0; channel < 3; ++channel)
+                    rgba[i + channel] = g_gamma_lut[channel][rgba[i + channel]];
         dx_dump_frame_rgba(rgba.data(), dev->d3d8_width, dev->d3d8_height);
         host_display_present_window_rgba(rgba.data(), int(dev->d3d8_width), int(dev->d3d8_height));
         com_ret(c, D8_OK);

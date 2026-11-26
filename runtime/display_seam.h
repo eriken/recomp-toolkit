@@ -17,7 +17,9 @@ void host_display_set_screen(int32_t w, int32_t h);
 uint64_t host_display_epoch(void);
 int host_display_offer_mode(int w, int h, int bpp);
 void host_display_request_window(int mode); /* queued; 0 windowed, 1 borderless, 2 fullscreen */
-int host_display_take_window(void);         /* main thread drains; -1 when unchanged */
+/* The guest display gamma ramp: 256 red, green, then blue entries, or null. */
+void host_display_set_gamma(const uint16_t *ramp);
+int host_display_take_window(void); /* main thread drains; -1 when unchanged */
 void mods_display_transition(uint64_t epoch, int screen_class);
 int mods_display_classic(void);
 int mods_display_scale(void);
