@@ -101,6 +101,7 @@ impl SurfacePresenter {
         if !self.suspended {
             self.config.width = width;
             self.config.height = height;
+            let _ = self.context.device.poll(wgpu::PollType::wait_indefinitely());
             self.surface.configure(&self.context.device, &self.config);
         }
         Ok(())
