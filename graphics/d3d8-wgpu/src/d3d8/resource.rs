@@ -246,7 +246,7 @@ pub fn expand_indexed_into(
                 .ok_or_else(|| invalid("index count overflow"))?,
             draw.primitive_count,
         ),
-        2 | 6 => (
+        5 | 6 => (
             draw.primitive_count
                 .checked_add(2)
                 .ok_or_else(|| invalid("index count overflow"))?,
@@ -255,7 +255,7 @@ pub fn expand_indexed_into(
         _ => {
             return Err(RenderError::new(
                 "DrawIndexedPrimitive",
-                "unsupported topology; expected TRIANGLELIST (4), TRIANGLESTRIP (2) or TRIANGLEFAN (6)",
+                "unsupported topology; expected TRIANGLELIST (4), TRIANGLESTRIP (5) or TRIANGLEFAN (6)",
             ));
         }
     };
@@ -311,13 +311,18 @@ pub fn expand_indexed_into(
         .checked_mul(draw.stride)
         .ok_or_else(|| invalid("expanded size overflow"))?;
     // The source position of output triangle vertex `t`: a list is in order, a
-    // strip is windowed (i, i+1, i+2), and a fan pins vertex 0.
+    // strip is windowed (i, i+1, i+2) with odd triangles as (i+1, i, i+2) so
+    // every triangle keeps the strip's winding, and a fan pins vertex 0.
     let source = |t: usize| -> usize {
         match draw.topology {
             4 => t,
-            2 => {
+            5 => {
                 let i = t / 3;
-                i + t % 3
+                match (i & 1, t % 3) {
+                    (1, 0) => i + 1,
+                    (1, 1) => i,
+                    (_, k) => i + k,
+                }
             }
             _ => {
                 let i = t / 3;
@@ -656,7 +661,7 @@ mod tests {
             .flat_map(u16::to_le_bytes)
             .collect::<Vec<_>>();
         let strip = IndexedDraw {
-            topology: 2,
+            topology: 5,
             index_format: 101,
             stride: 1,
             base_vertex: 0,
@@ -667,7 +672,7 @@ mod tests {
         };
         assert_eq!(
             expand_indexed(&vertices, &indices, strip).unwrap(),
-            [11, 12, 13, 12, 13, 14]
+            [11, 12, 13, 13, 12, 14]
         );
         let fan = IndexedDraw {
             topology: 6,
