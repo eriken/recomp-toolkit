@@ -631,7 +631,11 @@ pub struct Uniform {
     pub pc: [[f32; 4]; 8],
     pub bump: [[f32; 4]; 4],
     pub lum: [[f32; 4]; 4],
+    /// `lod[stage]`: x LOD bias; y texture set, 8 none or 9 camera-space
+    /// position; z the generated coordinate's divisor component (3 z, 4 w).
     pub lod: [[f32; 4]; 4],
+    /// Per-stage `D3DTS_TEXTUREn` for camera-space generation.
+    pub texm: [[[f32; 4]; 4]; 4],
 }
 impl Default for Uniform {
     fn default() -> Self {
@@ -669,7 +673,7 @@ pub fn compose(vs: Option<(&Declaration, &Program)>, ps: Option<&Program>, lit: 
     } else {
         TEXTURED_WGSL.into()
     };
-    s += "\nstruct ProgramUniform { vc: array<vec4<f32>,96>, pc: array<vec4<f32>,8>, bump: array<vec4<f32>,4>, lum: array<vec4<f32>,4>, lod: array<vec4<f32>,4>, };\n@group(0) @binding(4) var<uniform> program: ProgramUniform;\n@group(1) @binding(4) var stage2_tex: texture_2d<f32>;\n@group(1) @binding(5) var stage2_sampler: sampler;\n@group(1) @binding(6) var stage3_tex: texture_2d<f32>;\n@group(1) @binding(7) var stage3_sampler: sampler;\n";
+    s += "\nstruct ProgramUniform { vc: array<vec4<f32>,96>, pc: array<vec4<f32>,8>, bump: array<vec4<f32>,4>, lum: array<vec4<f32>,4>, lod: array<vec4<f32>,4>, texm: array<mat4x4<f32>,4>, };\n@group(0) @binding(4) var<uniform> program: ProgramUniform;\n@group(1) @binding(4) var stage2_tex: texture_2d<f32>;\n@group(1) @binding(5) var stage2_sampler: sampler;\n@group(1) @binding(6) var stage3_tex: texture_2d<f32>;\n@group(1) @binding(7) var stage3_sampler: sampler;\n";
     s=s.replace("    out.specular = vec3<f32>(\n", "    out.specular_alpha = f32((in.specular >> 24u) & 255u) / 255.0;\n    out.specular = vec3<f32>(\n");
     let out = "    @location(7) uv2: vec2<f32>,\n    @location(8) uv3: vec2<f32>,\n    @location(9) specular_alpha: f32,\n";
     s = s.replace(
@@ -708,7 +712,7 @@ pub fn compose(vs: Option<(&Declaration, &Program)>, ps: Option<&Program>, lit: 
             for stage in 0..4 {
                 let init = format!("t[{stage}]=vec4<f32>(in.uv{stage},0.0,1.0);");
                 let replace = format!(
-                    "t[{stage}]=vec4<f32>(0.0,0.0,0.0,1.0);if(program.lod[{stage}].y==0.0){{t[{stage}]=vec4<f32>(in.uv0,0.0,1.0);}}else if(program.lod[{stage}].y==1.0){{t[{stage}]=vec4<f32>(in.uv1,0.0,1.0);}}"
+                    "t[{stage}]=vec4<f32>(0.0,0.0,0.0,1.0);if(program.lod[{stage}].y==0.0){{t[{stage}]=vec4<f32>(in.uv0,0.0,1.0);}}else if(program.lod[{stage}].y==1.0){{t[{stage}]=vec4<f32>(in.uv1,0.0,1.0);}}else if(program.lod[{stage}].y==9.0){{let g=program.texm[{stage}]*in.cam_pos;var q=1.0;if(program.lod[{stage}].z==3.0){{q=g.z;}}else if(program.lod[{stage}].z==4.0){{q=g.w;}}t[{stage}]=vec4<f32>(g.xy/q,0.0,1.0);}}"
                 );
                 body = body.replace(&init, &replace);
             }

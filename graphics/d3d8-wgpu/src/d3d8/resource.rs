@@ -141,9 +141,10 @@ impl<'a> VertexBuffer<'a> {
     }
 }
 
-/// Pack a nonindexed strip/fan into independent triangles, retaining complete
-/// vertex records and alternating strip winding. Bounds and allocation are
-/// checked before any source copy; the caller retains/reuses the scratch bytes.
+/// Pack a nonindexed line strip into a line list, or a triangle strip/fan into
+/// independent triangles, retaining complete vertex records and alternating
+/// strip winding. Bounds and allocation are checked before any source copy;
+/// the caller retains/reuses the scratch bytes.
 pub fn expand_nonindexed_into(
     output: &mut Vec<u8>,
     vertices: &VertexBuffer,
@@ -152,26 +153,27 @@ pub fn expand_nonindexed_into(
     primitive_count: u32,
 ) -> Result<(), RenderError> {
     let invalid = |why| RenderError::invalid("DrawPrimitive", why);
-    if !matches!(topology, 5 | 6) {
+    if !matches!(topology, 3 | 5 | 6) {
         return Err(RenderError::new(
             "DrawPrimitive",
-            "expected TRIANGLESTRIP (5) or TRIANGLEFAN (6)",
+            "expected LINESTRIP (3), TRIANGLESTRIP (5) or TRIANGLEFAN (6)",
         ));
     }
     if primitive_count == 0 {
         output.clear();
         return Ok(());
     }
+    let (extra, per) = if topology == 3 { (1, 2) } else { (2, 3) };
     let end = start_vertex
         .checked_add(primitive_count)
-        .and_then(|n| n.checked_add(2))
+        .and_then(|n| n.checked_add(extra))
         .ok_or_else(|| invalid("vertex range overflow"))?;
     let stride = vertices.stride;
     if u64::from(end) * u64::from(stride) > vertices.bytes().len() as u64 {
         return Err(invalid("vertex range exceeds buffer"));
     }
     let size = primitive_count
-        .checked_mul(3)
+        .checked_mul(per)
         .and_then(|n| n.checked_mul(stride))
         .ok_or_else(|| invalid("expanded vertex size overflow"))? as usize;
     output.clear();
@@ -179,6 +181,13 @@ pub fn expand_nonindexed_into(
         RenderError::out_of_memory("DrawPrimitive", "triangle expansion allocation failed")
     })?;
     for triangle in 0..primitive_count {
+        if topology == 3 {
+            for index in [triangle, triangle + 1] {
+                let begin = (u64::from(start_vertex + index) * u64::from(stride)) as usize;
+                output.extend_from_slice(&vertices.bytes()[begin..begin + stride as usize]);
+            }
+            continue;
+        }
         let indices = if topology == 6 {
             [0, triangle + 1, triangle + 2]
         } else if triangle & 1 == 0 {

@@ -270,7 +270,9 @@ impl LightingSetup<'_> {
                     let light_position = transform(self.state.view, light.position, 1.0);
                     let delta = std::array::from_fn(|c| light_position[c] - view_position[c]);
                     let distance = dot(delta, delta).sqrt();
-                    if distance > light.range {
+                    // DIVERGENCE(original): a light at a non-finite position
+                    // contributes nothing instead of NaN colour.
+                    if !(distance <= light.range) {
                         continue;
                     }
                     let denominator = light.attenuation0
@@ -463,8 +465,8 @@ impl DeviceState {
             || !self
                 .lights
                 .iter()
-                .zip(self.light_enabled)
-                .any(|(l, enabled)| enabled && l.light_type != 3)
+                .zip(&self.light_enabled)
+                .any(|(l, enabled)| *enabled && l.light_type != 3)
         {
             return true;
         }
@@ -482,11 +484,14 @@ impl DeviceState {
 
     fn lighting_setup(&self) -> Result<LightingSetup<'_>, RenderError> {
         let s = &self.states;
+        // DIVERGENCE(original): past MAX_LIGHTS enabled lights, the lowest
+        // indices light the draw; drivers differ on which they keep.
         let enabled: Vec<_> = self
             .lights
             .iter()
-            .zip(self.light_enabled)
+            .zip(&self.light_enabled)
             .filter_map(|(light, on)| on.then_some(light))
+            .take(MAX_LIGHTS)
             .collect();
         if s.lighting {
             for light in &enabled {

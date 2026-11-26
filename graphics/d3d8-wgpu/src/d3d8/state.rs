@@ -82,6 +82,8 @@ pub struct TextureStage {
 
 /// A fixed-function device exposes eight active lights (`D3DCAPS8::MaxActiveLights`).
 pub const MAX_LIGHTS: usize = 8;
+/// Highest light index `SetLight`/`LightEnable` accept.
+pub const MAX_LIGHT_INDEX: usize = 4095;
 
 /// A `D3DMATERIAL8` channel: four floats in `r, g, b, a` order.
 pub type ColorValue = [f32; 4];
@@ -357,8 +359,8 @@ pub struct DeviceState {
     material: Material,
     /// The eight `D3DLIGHT8` slots and their enable flags, indexed as the
     /// guest's `SetLight`/`LightEnable`, consumed by vertex lighting.
-    lights: [Light; MAX_LIGHTS],
-    light_enabled: [bool; MAX_LIGHTS],
+    lights: Vec<Light>,
+    light_enabled: Vec<bool>,
 }
 
 impl DeviceState {
@@ -376,8 +378,8 @@ impl DeviceState {
             states: RenderStates::d3d_defaults(),
             texture_stages: vec![BTreeMap::new(); MAX_TEXTURE_STAGES],
             material: Material::d3d_default(),
-            lights: [Light::default(); MAX_LIGHTS],
-            light_enabled: [false; MAX_LIGHTS],
+            lights: vec![Light::default(); MAX_LIGHTS],
+            light_enabled: vec![false; MAX_LIGHTS],
         }
     }
 
@@ -452,10 +454,10 @@ impl DeviceState {
         self.material
     }
 
-    /// `IDirect3DDevice8::SetLight`. The index must be below
-    /// [`MAX_LIGHTS`]; out-of-range is a named error, as in D3D8.
+    /// `IDirect3DDevice8::SetLight`. Any index up to [`MAX_LIGHT_INDEX`] may
+    /// hold a light; only [`MAX_LIGHTS`] of them light a draw at once.
     pub fn set_light(&mut self, index: u32, light: Light) -> Result<(), RenderError> {
-        let slot = self.light_slot(index, "set_light")?;
+        let slot = self.grow_lights(index, "set_light")?;
         self.lights[slot] = light;
         Ok(())
     }
@@ -466,9 +468,10 @@ impl DeviceState {
         Ok(self.lights[slot])
     }
 
-    /// `IDirect3DDevice8::LightEnable`.
+    /// `IDirect3DDevice8::LightEnable`. An index never set gets a default
+    /// light, as in D3D8.
     pub fn light_enable(&mut self, index: u32, enable: bool) -> Result<(), RenderError> {
-        let slot = self.light_slot(index, "light_enable")?;
+        let slot = self.grow_lights(index, "light_enable")?;
         self.light_enabled[slot] = enable;
         Ok(())
     }
@@ -479,14 +482,29 @@ impl DeviceState {
         Ok(self.light_enabled[slot])
     }
 
-    /// Bounds-check a light index against [`MAX_LIGHTS`].
+    /// Bounds-check a light index against the lights set so far.
     fn light_slot(&self, index: u32, op: &'static str) -> Result<usize, RenderError> {
         let slot = index as usize;
-        if slot >= MAX_LIGHTS {
+        if slot >= self.lights.len() {
             return Err(RenderError::new(
                 op,
-                format!("light index {index} is beyond D3D8's {MAX_LIGHTS} active lights"),
+                format!("light index {index} was never set"),
             ));
+        }
+        Ok(slot)
+    }
+
+    fn grow_lights(&mut self, index: u32, op: &'static str) -> Result<usize, RenderError> {
+        let slot = index as usize;
+        if slot > MAX_LIGHT_INDEX {
+            return Err(RenderError::new(
+                op,
+                format!("light index {index} is beyond the supported {MAX_LIGHT_INDEX}"),
+            ));
+        }
+        if slot >= self.lights.len() {
+            self.lights.resize(slot + 1, Light::default());
+            self.light_enabled.resize(slot + 1, false);
         }
         Ok(slot)
     }
@@ -1190,6 +1208,25 @@ impl DeviceState {
     }
 
     /// `D3DRS_SRCBLEND`.
+    /// The fog colour a blended draw uses so fully fogged pixels leave the
+    /// target unchanged, as WineD3D and D3D8 drivers do: black when added,
+    /// white when multiplied, grey when multiplied twice. `None` keeps
+    /// D3DRS_FOGCOLOR; `Err` is a destination blend with no such colour.
+    pub fn blended_fog_color(&self) -> Result<Option<[f32; 4]>, D3DBLEND> {
+        if !self.states.alpha_blend_enable {
+            return Ok(None);
+        }
+        match (self.states.src_blend, self.states.dest_blend) {
+            (_, D3DBLEND::One) => Ok(Some([0.0, 0.0, 0.0, 1.0])),
+            (D3DBLEND::DestColor, D3DBLEND::Zero) | (D3DBLEND::Zero, D3DBLEND::SrcColor) => {
+                Ok(Some([1.0; 4]))
+            }
+            (D3DBLEND::DestColor, D3DBLEND::SrcColor) => Ok(Some([0.5, 0.5, 0.5, 1.0])),
+            (_, D3DBLEND::Zero | D3DBLEND::InvSrcAlpha) => Ok(None),
+            (_, other) => Err(other),
+        }
+    }
+
     pub fn src_blend(&self) -> D3DBLEND {
         self.states.src_blend
     }
@@ -1374,15 +1411,10 @@ impl DeviceState {
                     "D3DRS_RANGEFOGENABLE must be FALSE with table fog (range-based table fog is not implemented)",
                 ));
             }
-            if s.alpha_blend_enable {
-                match s.dest_blend {
-                    D3DBLEND::Zero | D3DBLEND::InvSrcAlpha | D3DBLEND::One => {}
-                    other => {
-                        return Err(unsupported(&format!(
-                            "fog with D3DRS_DESTBLEND={other:?} needs the D3D8 fog-colour adjustment, which is not implemented (only ZERO, INVSRCALPHA and ONE are)"
-                        )));
-                    }
-                }
+            if let Err(other) = self.blended_fog_color() {
+                return Err(unsupported(&format!(
+                    "fog with D3DRS_DESTBLEND={other:?} needs the D3D8 fog-colour adjustment, which is not implemented (only ZERO, INVSRCALPHA, ONE and the SRCCOLOR modulate blends are)"
+                )));
             }
         }
         if s.alpha_test_enable && s.alpha_ref > 0xff {
@@ -1792,11 +1824,18 @@ mod tests {
         assert!(!state.light_enabled(0).unwrap());
         state.light_enable(3, false).unwrap();
         assert!(!state.light_enabled(3).unwrap());
-        // Out-of-range slots are named errors on every entry point.
-        assert!(state.set_light(MAX_LIGHTS as u32, light).is_err());
+        // Indices past the eight active lights are storable; unset ones and
+        // those past MAX_LIGHT_INDEX are named errors.
         assert!(state.light(MAX_LIGHTS as u32).is_err());
-        assert!(state.light_enable(MAX_LIGHTS as u32, true).is_err());
         assert!(state.light_enabled(MAX_LIGHTS as u32).is_err());
+        state.set_light(MAX_LIGHTS as u32, light).unwrap();
+        assert_eq!(state.light(MAX_LIGHTS as u32).unwrap(), light);
+        assert!(state.set_light(MAX_LIGHT_INDEX as u32 + 1, light).is_err());
+        assert!(
+            state
+                .light_enable(MAX_LIGHT_INDEX as u32 + 1, true)
+                .is_err()
+        );
     }
 
     #[test]

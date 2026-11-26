@@ -975,15 +975,16 @@ const DRAW_UB_PROGRAM: u64 = 1024;
 // Fixed-function lighting reuses the otherwise unused program bank. Only a
 // GPU-lit draw with a pixel shader needs both immutable banks simultaneously.
 const DRAW_UB_LIGHTING: u64 = DRAW_UB_PROGRAM;
-const DRAW_VERTEX_OFFSET: u64 = 3072;
+const DRAW_VERTEX_OFFSET: u64 = 3328;
 const DRAW_UB_LIGHTING_EXTENDED: u64 = DRAW_VERTEX_OFFSET;
-const DRAW_EXTENDED_VERTEX_OFFSET: u64 = 4096;
+const DRAW_EXTENDED_VERTEX_OFFSET: u64 = 4352;
 const _: () = {
     assert!(std::mem::size_of::<TransformUniform>() <= 256);
     assert!(std::mem::size_of::<FogUniform>() <= 256);
     assert!(std::mem::size_of::<AlphaTestUniform>() <= 256);
     assert!(std::mem::size_of::<StagesUniform>() <= 256);
     assert!(std::mem::size_of::<LightingUniform>() <= 1024);
+    assert!(DRAW_UB_PROGRAM + std::mem::size_of::<shader::Uniform>() as u64 <= DRAW_VERTEX_OFFSET);
 };
 
 /// The raw `MTLTexture*` behind a wgpu texture. Only the Metal backend has one.
@@ -1823,12 +1824,11 @@ impl Device {
     /// Resolve the D3D8 table/pixel fog uniform for the current state.
     ///
     fn fog_uniform(&self) -> FogUniform {
-        use crate::d3d8::enums::D3DBLEND;
         let enable = self.state.fog_enable();
-        let mut color = crate::d3d8::fixed_function::d3dcolor_to_rgba(self.state.fog_color());
-        if enable && self.state.alpha_blend_enable() && self.state.dest_blend() == D3DBLEND::One {
-            color = [0.0, 0.0, 0.0, 1.0];
-        }
+        let color = match self.state.blended_fog_color() {
+            Ok(Some(color)) if enable => color,
+            _ => crate::d3d8::fixed_function::d3dcolor_to_rgba(self.state.fog_color()),
+        };
         // D3D8: a non-NONE FOGTABLEMODE selects per-pixel table fog; otherwise
         // FOGVERTEXMODE selects per-vertex fog, the only kind range-based
         // distance applies to (`validate_*` refuses range with table fog).
@@ -1887,7 +1887,7 @@ impl Device {
         start_vertex: u32,
         primitive_count: u32,
     ) -> Result<(), RenderError> {
-        if matches!(topology, 5 | 6) {
+        if matches!(topology, 3 | 5 | 6) {
             if primitive_count == 0 {
                 return Ok(());
             }
@@ -1901,7 +1901,8 @@ impl Device {
                     primitive_count,
                 )?;
                 let view = VertexBuffer::borrowed(&scratch, vertices.stride)?;
-                self.draw_stream(4, fvf, &view, 0, primitive_count, None)
+                let list = if topology == 3 { 2 } else { 4 };
+                self.draw_stream(list, fvf, &view, 0, primitive_count, None)
             })();
             self.index_scratch = scratch;
             return result;
@@ -2258,10 +2259,30 @@ impl Device {
                     .state
                     .texture_stage_state(stage as u32, 24)
                     .unwrap_or(0);
+                // Camera-space position, optionally transformed (COUNT2..4)
+                // and projected by its third or fourth component.
+                let camera_space =
+                    coord >> 16 == 2 && matches!(flags, 0 | 2 | 3 | 4 | 0x103 | 0x104);
+                if camera_space {
+                    program_uniform.lod[stage][1] = 9.0;
+                    program_uniform.lod[stage][2] = match flags {
+                        0x103 => 3.0,
+                        0x104 => 4.0,
+                        _ => 0.0,
+                    };
+                    if flags != 0 {
+                        program_uniform.texm[stage] = self.state.texture_transforms[stage].rows;
+                    } else {
+                        program_uniform.texm[stage] = crate::d3d8::math::Mat4::IDENTITY.rows;
+                    }
+                    continue;
+                }
                 if coord & !0xffff != 0 || flags != 0 {
                     return Err(RenderError::new(
                         "DrawPrimitive",
-                        "fixed-function vertex texgen/texture transforms with a pixel shader are unsupported",
+                        format!(
+                            "fixed-function vertex texgen/texture transforms with a pixel shader are unsupported (stage {stage}, TEXCOORDINDEX {coord:#x}, TEXTURETRANSFORMFLAGS {flags:#x}, FVF {fvf:#x})"
+                        ),
                     ));
                 }
                 program_uniform.lod[stage][1] = if coord < layout.texcoord_sets {
