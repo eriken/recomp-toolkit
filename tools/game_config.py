@@ -690,6 +690,8 @@ def load(game_dir, build_root=None):
     presentation_filter = settings.setdefault("presentation_filter", "bilinear")
     if presentation_filter not in ("nearest", "bilinear"):
         raise ValueError("%s: [settings] presentation_filter must be nearest or bilinear" % source)
+    if not isinstance(settings.setdefault("window_at_mode_size", False), bool):
+        raise ValueError("%s: [settings] window_at_mode_size must be a boolean" % source)
     rows = settings.setdefault("rows", list(SETTINGS_ROWS))
     if not isinstance(rows, list):
         raise ValueError("%s: [settings] rows must be a list, not %r" % (source, rows))

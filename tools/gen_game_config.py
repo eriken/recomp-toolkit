@@ -114,6 +114,7 @@ def render_header(cfg):
     lines.append("#define RECOMP_SETTINGS_WINDOW_MODE %d" % ("windowed", "borderless", "fullscreen").index(settings["window_mode"]))
     lines.append("#define RECOMP_SETTINGS_PERFORMANCE_OVERLAY %d" % ("off", "counters", "graph").index(settings["performance_overlay"]))
     lines.append("#define RECOMP_SETTINGS_PRESENTATION_FILTER %d" % ("nearest", "bilinear").index(settings["presentation_filter"]))
+    lines.append("#define RECOMP_SETTINGS_WINDOW_AT_MODE_SIZE %d" % int(settings["window_at_mode_size"]))
     # The launcher's data: what to call the game, where to get it, where an
     # install may be, and what an import copies (host/launcher/).
     launcher = cfg["launcher"]

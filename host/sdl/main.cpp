@@ -190,6 +190,9 @@ HostWindowSize window_size_for(int gw, int gh) {
         visible.w = visible.h = 0;
     const float density =
         g_window ? SDL_GetWindowPixelDensity(g_window) : SDL_GetDisplayContentScale(display);
+    if (RECOMP_SETTINGS_WINDOW_AT_MODE_SIZE && gw > 0 && gh > 0 && gw <= visible.w &&
+        gh <= visible.h)
+        return HostWindowSize{gw, gh, gw, gh};
     return host_window_size_for(gw, gh, visible.w, visible.h, density > 0 ? density : 1.0);
 }
 
@@ -1447,6 +1450,14 @@ void handle_event(const SDL_Event &event) {
     case SDL_EVENT_WINDOW_RESIZED:
         note_screen_size();
         post_drawable_size();
+        // The hidden OS cursor stays where it was while relative motion is
+        // captured; a smaller or moved window can leave it outside, where the
+        // next click would land on whatever is behind the window.
+        if (g_relative_mouse && g_window) {
+            int ww = 0, wh = 0;
+            if (SDL_GetWindowSize(g_window, &ww, &wh) && ww > 0 && wh > 0)
+                SDL_WarpMouseInWindow(g_window, ww / 2.0f, wh / 2.0f);
+        }
         break;
     case SDL_EVENT_WINDOW_DISPLAY_CHANGED:
     case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
@@ -1479,6 +1490,12 @@ void handle_event(const SDL_Event &event) {
         }
         g_fullscreen_transition = false;
         g_window_mode = 0;
+        if (RECOMP_SETTINGS_WINDOW_AT_MODE_SIZE && g_mode_w > 0 && g_mode_h > 0) {
+            const HostWindowSize size = window_size_for(g_mode_w, g_mode_h);
+            SDL_SetWindowMinimumSize(g_window, size.min_w, size.min_h);
+            SDL_SetWindowSize(g_window, size.w, size.h);
+            SDL_SetWindowPosition(g_window, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+        }
         note_screen_size();
         post_drawable_size();
         update_platform_pointer_capture();
