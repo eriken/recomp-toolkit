@@ -1580,6 +1580,14 @@ int service(double seconds) {
             break;
         handle_event(event);
     }
+    // A window change can report a focus loss and drop the gain that follows,
+    // which would leave the guest in the background for good.
+    if (g_window && g_guest_activated && window_focused() != g_focused) {
+        SDL_Event sync{};
+        sync.type = g_focused ? SDL_EVENT_WINDOW_FOCUS_LOST : SDL_EVENT_WINDOW_FOCUS_GAINED;
+        sync.window.windowID = SDL_GetWindowID(g_window);
+        handle_event(sync);
+    }
     // Input that was only QUEUED still counts as input having arrived: the
     // guest should re-check its condition and come back through the tick,
     // which is where the queue is applied.

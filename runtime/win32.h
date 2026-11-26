@@ -604,6 +604,8 @@ void host_midi_close(void);
 // main thread, through the guest callback registered by timeSetEvent.
 // ---------------------------------------------------------------------------
 void host_pump_timers(X86 *c);
+// Only the due timeSetEvent timers, without the frame pumps.
+void host_pump_mm_timers(X86 *c);
 
 // ---------------------------------------------------------------------------
 // Registry: backed by build/recomp/registry.json (path overridable with

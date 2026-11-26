@@ -947,15 +947,13 @@ extern "C" int32_t host_audio_write(int32_t id, const void *pcm, uint32_t offset
             // A silent ring is the Spore music case: the loop has been playing
             // an empty buffer while the worker fills it. Start the live ring at
             // the guest's first write, not at the clock, or that write lands
-            // behind the cursor and is never heard.
-            uint32_t from;
-            if (channel->silent) {
+            // behind the cursor and is never heard. A write just ahead of the
+            // clock keeps the clock: the guest measured its lead from it.
+            uint32_t from = channel->cursor;
+            if (channel->streaming)
+                from = stream_cursor_locked(*channel) % total;
+            if (channel->silent && (offset + total - from) % total >= total / 2)
                 from = offset;
-            } else {
-                from = channel->cursor;
-                if (channel->streaming)
-                    from = stream_cursor_locked(*channel) % total;
-            }
             from -= from % frame;
 
             channel->ring = make_segment(*channel, 0, total);

@@ -2896,7 +2896,10 @@ void host_pump_timers(X86 *c) {
     // sound that a timer callback then asks about.
     for (int i = 0; i < g_frame_pump_count; ++i)
         g_frame_pumps[i](c);
+    host_pump_mm_timers(c);
+}
 
+void host_pump_mm_timers(X86 *c) {
     if (timers().empty())
         return;
     uint32_t now = host_millis();

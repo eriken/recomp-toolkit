@@ -218,6 +218,7 @@ uint32_t sched_wait_objects_ex(X86 *c, const uint32_t *handles, uint32_t count, 
 void sched_enter_critsec(uint32_t cs);
 bool sched_try_critsec(uint32_t cs);
 void sched_leave_critsec(uint32_t cs);
+bool sched_holds_no_critsec();
 void sched_wake_all();
 void sched_pulse_event(HObj *o);
 
@@ -2128,6 +2129,11 @@ void k_LeaveCriticalSection(X86 *c) {
     imports_call_leaves_surfaces();
     sched_leave_critsec(arg(c, 0));
     set_eax(c, 0);
+    // Windows runs multimedia timers on a thread of their own, so a guest busy
+    // loading still hears from them. A thread holding no section is where a
+    // callback can run without entering a lock it does not own.
+    if (sched_holds_no_critsec())
+        host_pump_mm_timers(c);
 }
 void k_DeleteCriticalSection(X86 *c) {
     set_eax(c, 0);
@@ -2337,6 +2343,7 @@ struct GuestApc {
 
 struct GuestThread {
     size_t index = 0;
+    uint32_t critsecs_held = 0;
     uint32_t handle = 0; // 0 for the main thread: it has none
     uint32_t id = 1;     // GetCurrentThreadId
     uint32_t start = 0, param = 0;
@@ -2924,6 +2931,10 @@ void critsec_take(uint32_t cs, uint32_t tid) {
     if (!cs || !gm_valid(cs, 24))
         return;
     uint32_t rec = rd32(cs + CS_OFF_OWNER) == tid ? rd32(cs + CS_OFF_RECURSION) : 0;
+    if (!rec)
+        for (GuestThread *t : threads())
+            if (t->id == tid)
+                ++t->critsecs_held;
     wr32(cs + CS_OFF_OWNER, tid);
     wr32(cs + CS_OFF_RECURSION, rec + 1);
     wr32(cs + CS_OFF_LOCK_COUNT, rec); // LockCount is recursion - 1
@@ -3608,6 +3619,10 @@ bool sched_try_critsec(uint32_t cs) {
     return got;
 }
 
+bool sched_holds_no_critsec() {
+    return cur_thread()->critsecs_held == 0;
+}
+
 void sched_leave_critsec(uint32_t cs) {
     if (!cs || !gm_valid(cs, 24))
         return;
@@ -3628,6 +3643,8 @@ void sched_leave_critsec(uint32_t cs) {
     wr32(cs + CS_OFF_LOCK_COUNT, rec ? rec - 1 : 0xffffffffu);
     bool contended = false;
     if (!rec) {
+        if (me->critsecs_held)
+            --me->critsecs_held;
         wr32(cs + CS_OFF_OWNER, 0);
         // Only a thread blocked on this very section can be released by it, and
         // it still has to be handed the baton before it runs. Waking every
