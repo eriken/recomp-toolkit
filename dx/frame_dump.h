@@ -3,6 +3,7 @@
 #include <cstdint>
 
 // RECOMP_DUMP_FRAME_DIR writes sequential RGB PNGs. Unset means no file work.
+// RECOMP_DUMP_FRAME_EVERY=N keeps one frame in N, named by its frame number.
 void dx_dump_frame_rgba(const uint8_t *rgba, uint32_t width, uint32_t height);
 
 // True when RECOMP_DUMP_FRAME_DIR is set.

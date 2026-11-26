@@ -59,8 +59,15 @@ void dx_dump_frame_rgba(const uint8_t *rgba, uint32_t width, uint32_t height) {
     if (dump_directory().empty())
         return;
     static uint32_t serial = 0; // Called on the guest scheduler baton.
+    static const uint32_t every = [] {
+        const char *value = getenv("RECOMP_DUMP_FRAME_EVERY");
+        const long n = value ? strtol(value, nullptr, 10) : 1;
+        return n > 1 ? uint32_t(n) : 1u;
+    }();
+    if (serial++ % every)
+        return;
     char number[32];
-    snprintf(number, sizeof number, "frame_%05u", serial++);
+    snprintf(number, sizeof number, "frame_%05u", serial - 1);
     dump_png(number, rgba, width, height);
 }
 
