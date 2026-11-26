@@ -702,6 +702,11 @@ HitResult host_gate_window_pointer(int32_t x, int32_t y, int32_t *dx, int32_t *d
 bool host_gate_relative_motion(double dx, double dy) {
     if (!g_captured)
         return false;
+    int32_t wx, wy;
+    if (host_take_cursor_warp(&wx, &wy) && wx >= 0 && wy >= 0 && wx < g_mode_w && wy < g_mode_h) {
+        g_cursor_x = wx;
+        g_cursor_y = wy;
+    }
     auto counts = [](double value, double &remainder) {
         if (!std::isfinite(value))
             return int32_t(0);

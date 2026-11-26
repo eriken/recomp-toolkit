@@ -630,7 +630,8 @@ bool pointer_capture_wanted() {
         return false;
     // DirectDraw owns a game display; other renderers can instead acquire a
     // DirectInput mouse. Ordinary launcher/settings windows keep the OS cursor.
-    if (!ddraw_gdi_primary_active() && !dinput_host_mouse_acquired())
+    if (!RECOMP_INPUT_CAPTURE_WINDOW_MOUSE && !ddraw_gdi_primary_active() &&
+        !dinput_host_mouse_acquired())
         return false;
     if (!g_focused || !g_window || !window_focused() || g_capture_release_held)
         return false;
@@ -1099,7 +1100,11 @@ void apply_focus(bool focused, uint32_t modifier_flags) {
     // the focus, so no event announced it and the gate's state says it is up.
     if (focused)
         host_gate_sync_modifiers(modifier_flags);
+    static bool recapture = false;
+    if (focused && recapture && pointer_capture_wanted())
+        apply_pointer_capture(true);
     if (!focused) {
+        recapture = RECOMP_INPUT_CAPTURE_WINDOW_MOUSE && host_pointer_captured();
         // The pointer goes back to the user BEFORE the state is cleared:
         // host_gate_release_all drops the capture flag, and the platform
         // effects are keyed off that flag.

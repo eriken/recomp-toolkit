@@ -663,6 +663,8 @@ def load(game_dir, build_root=None):
     relative_capture = input_config.setdefault("relative_mouse_capture", True)
     if not isinstance(relative_capture, bool):
         raise ValueError("%s: [input] relative_mouse_capture must be a boolean" % source)
+    if not isinstance(input_config.setdefault("capture_window_mouse", False), bool):
+        raise ValueError("%s: [input] capture_window_mouse must be a boolean" % source)
     keyboard_names = input_config.setdefault("keyboard_names", "system")
     if keyboard_names not in ("system", "us"):
         raise ValueError('%s: [input] keyboard_names must be "system" or "us", not %r'

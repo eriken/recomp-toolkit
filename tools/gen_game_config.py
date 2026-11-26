@@ -85,6 +85,7 @@ def render_header(cfg):
     lines.append("#define RECOMP_STRICT_IMPORTS %d" % int(game["strict_imports"]))
     lines.append("#define RECOMP_INPUT_RELATIVE_MOUSE_CAPTURE %d" % int(cfg["input"]["relative_mouse_capture"]))
     input_config = cfg["input"]
+    lines.append("#define RECOMP_INPUT_CAPTURE_WINDOW_MOUSE %d" % int(input_config["capture_window_mouse"]))
     lines.append("#define RECOMP_INPUT_KEYBOARD_NAMES %d" % (input_config["keyboard_names"] == "us"))
     lines.append("#define RECOMP_INPUT_MOUSE_SENSITIVITY %d" % input_config["mouse_sensitivity"])
     lines.append("#define RECOMP_INPUT_MOUSE_ACCELERATION %d" % int(input_config["mouse_acceleration"]))

@@ -13,6 +13,7 @@
 #include "loader.h"
 
 #include <array>
+#include <atomic>
 #include <deque>
 #include <map>
 #include <string>
@@ -50,6 +51,8 @@ uint32_t g_main_hwnd = 0;
 uint32_t g_cursor = 0;
 int32_t g_cursor_x = 0, g_cursor_y = 0;
 int32_t g_cursor_show = 0;
+std::atomic<uint64_t> g_cursor_warp{0};
+std::atomic<bool> g_cursor_warp_pending{false};
 int32_t g_clip[4] = {0, 0, 0, 0};
 bool g_clipped = false;
 bool (*g_message_waiter)() = nullptr;
@@ -180,6 +183,14 @@ void host_set_client_cursor_pos(uint32_t hwnd, int32_t x, int32_t y) {
     client_origin(hwnd, &origin_x, &origin_y);
     host_set_cursor_pos(int32_t(uint32_t(x) + uint32_t(origin_x)),
                         int32_t(uint32_t(y) + uint32_t(origin_y)));
+}
+bool host_take_cursor_warp(int32_t *x, int32_t *y) {
+    if (!g_cursor_warp_pending.exchange(false, std::memory_order_acquire))
+        return false;
+    const uint64_t v = g_cursor_warp.load(std::memory_order_relaxed);
+    *x = int32_t(uint32_t(v >> 32));
+    *y = int32_t(uint32_t(v));
+    return true;
 }
 void host_set_message_waiter(bool (*fn)()) {
     g_message_waiter = fn;
@@ -1545,6 +1556,13 @@ void u_SetCursor(X86 *c) {
 void u_SetCursorPos(X86 *c) {
     g_cursor_x = (int32_t)arg(c, 0);
     g_cursor_y = (int32_t)arg(c, 1);
+    if (g_main_hwnd) {
+        int32_t ox = 0, oy = 0;
+        client_origin(g_main_hwnd, &ox, &oy);
+        const uint32_t cx = uint32_t(g_cursor_x - ox), cy = uint32_t(g_cursor_y - oy);
+        g_cursor_warp.store((uint64_t(cx) << 32) | cy, std::memory_order_relaxed);
+        g_cursor_warp_pending.store(true, std::memory_order_release);
+    }
     if (trace_pointer())
         fprintf(stderr, "[cursor] SetCursorPos %d,%d\n", g_cursor_x, g_cursor_y);
     set_eax(c, 1);
