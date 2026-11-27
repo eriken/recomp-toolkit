@@ -121,9 +121,13 @@ void Launcher::start(const std::string &known) {
         for (const std::string &f : load_folders(info_.folders_file))
             consider(f);
     found_.clear();
-    for (const std::string &c : platform_.candidates(spec_))
-        if (std::find(found_.begin(), found_.end(), c) == found_.end())
-            found_.push_back(c);
+    // Only search when the known folders don't already hold a ready game: the
+    // search reads protected folders such as Downloads, and macOS asks the
+    // player for access to each one again after every rebuild of the app.
+    if (best.state != State::Ready)
+        for (const std::string &c : platform_.candidates(spec_))
+            if (std::find(found_.begin(), found_.end(), c) == found_.end())
+                found_.push_back(c);
     // Desktop plays a found install in place; elsewhere a found folder is only
     // something to import.
     if (info_.plays_in_place && best.state != State::Ready)
