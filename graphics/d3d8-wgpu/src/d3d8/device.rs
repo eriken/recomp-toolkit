@@ -1922,8 +1922,10 @@ impl Device {
         primitive_count: u32,
         indices: Option<&[u32]>,
     ) -> Result<(), RenderError> {
+        // D3D8 rejects a draw outside BeginScene/EndScene with
+        // D3DERR_INVALIDCALL and the game carries on; nothing is drawn.
         if !self.scene {
-            return Err(RenderError::new(
+            return Err(RenderError::invalid(
                 "DrawPrimitive",
                 "requires an open scene (BeginScene)",
             ));
