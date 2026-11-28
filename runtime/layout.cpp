@@ -92,7 +92,7 @@ HostLayout compute() {
         l.profile_dir = l.build_dir + "/profile";
     else if (l.profile_dir.empty()) {
         char buf[4096];
-        if (os_user_data_dir(RECOMP_APP_NAME, buf, sizeof buf) == 0)
+        if (os_user_data_dir(RECOMP_PROFILE_NAME, buf, sizeof buf) == 0)
             l.profile_dir = buf;
         else
             l.profile_dir = "profile"; // no home at all: beside the cwd

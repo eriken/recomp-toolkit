@@ -454,6 +454,11 @@ def load(game_dir, build_root=None):
     game["heap_base"] = validate_heap_base(int(game.get("heap_base", HEAP_BASE_DEFAULT)),
                                            game["heap_end"])
     windows_version(game.setdefault("windows_version", "4.10"))
+    # The profile folder under the per-user data folder; "Name/Sub" nests it.
+    profile_name = game.setdefault("profile_name", game["app_name"])
+    parts = profile_name.split("/") if isinstance(profile_name, str) else [""]
+    if any(not part or part in (".", "..") or any(ch in part for ch in '\\:\0') for part in parts):
+        raise ValueError("%s: [game] profile_name must be folder names joined by /" % source)
     # Fail loudly rather than returning 0 from an import whose stdcall arity is
     # unknown: the un-popped arguments otherwise drift the guest stack.
     # Store hooks (the guest watchpoint and DirectDraw dirty tracking) cost a

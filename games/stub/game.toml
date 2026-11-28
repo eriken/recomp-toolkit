@@ -7,6 +7,9 @@
 id = "stub"
 name = "Stub Game"
 app_name = "StubRecomp"
+# Optional: the profile folder (settings, saves) under the per-user data
+# folder, as folder names joined by "/". Defaults to app_name.
+# profile_name = "StubRecomp"
 bundle_id = "dev.recompkit.stub"
 executable = "STUB.EXE"
 sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
