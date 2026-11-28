@@ -647,6 +647,10 @@ def load(game_dir, build_root=None):
     # like any other drive's, against the game directory.
     if not isinstance(cfg["media"].setdefault("disc_label", ""), str):
         raise ValueError("%s: [media] disc_label must be a string" % source)
+    # Whether the game needs the FFmpeg decoders (movies, ADPCM audio). Unset
+    # leaves CMake's RECOMP_VIDEO default; false builds without FFmpeg.
+    if "video" in cfg["media"] and not isinstance(cfg["media"]["video"], bool):
+        raise ValueError("%s: [media] video must be a boolean" % source)
     if not isinstance(cfg.setdefault("audio", {}).setdefault("midi", True), bool):
         raise ValueError("%s: [audio] midi must be a boolean" % source)
     cfg.setdefault("hooks", {})

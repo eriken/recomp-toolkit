@@ -93,10 +93,15 @@ def cmake_tool(name):
 
 
 def game_defines(game_dir, build_root):
-    """The cache paths and the game's [render] switches, passed on every configure."""
-    render = game_config.load(game_dir, build_root)["render"]
-    return ["-DRECOMP_GAME_DIR=%s" % Path(game_dir).as_posix(), "-DRECOMP_BUILD_ROOT=%s" % Path(build_root).as_posix(),
-            "-DRECOMP_D3D8_WGPU=" + ("ON" if render["d3d8_wgpu"] else "OFF")]
+    """The cache paths and the game's [render] and [media] switches, passed on every configure."""
+    cfg = game_config.load(game_dir, build_root)
+    render = cfg["render"]
+    defines = ["-DRECOMP_GAME_DIR=%s" % Path(game_dir).as_posix(), "-DRECOMP_BUILD_ROOT=%s" % Path(build_root).as_posix(),
+               "-DRECOMP_D3D8_WGPU=" + ("ON" if render["d3d8_wgpu"] else "OFF")]
+    # [media] video: a game that plays no movies can skip building FFmpeg.
+    if "video" in cfg["media"]:
+        defines.append("-DRECOMP_VIDEO=" + ("ON" if cfg["media"]["video"] else "OFF"))
+    return defines
 
 
 def configure(preset, extra=(), build_dir=None):
